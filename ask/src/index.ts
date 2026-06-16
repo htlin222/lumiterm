@@ -118,6 +118,17 @@ function withCors(resp: Response): Response {
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
     const url = new URL(req.url);
+
+    // Force HTTPS so a typed bare domain / QR code never loads over plaintext
+    // (Chrome flags any http:// page as "not secure").
+    let scheme = url.protocol.replace(":", "");
+    const visitor = req.headers.get("cf-visitor");
+    if (visitor) { try { scheme = JSON.parse(visitor).scheme || scheme; } catch (_e) {} }
+    if (scheme === "http") {
+      url.protocol = "https:";
+      return Response.redirect(url.href, 301);
+    }
+
     const p = url.pathname;
     const room = env.ROOM.get(env.ROOM.idFromName("global"));
 
