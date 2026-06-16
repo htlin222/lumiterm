@@ -7,10 +7,9 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Ports + font come from config.json (single source of truth); env vars still win.
-CFG="$DIR/config.json"
-if [[ -f "$CFG" ]]; then
-  eval "$(python3 -c "import json;c=json.load(open('$CFG'));print('CFG_TTYD=%s\nCFG_WEB=%s\nCFG_FONT=%s'%(c.get('ttydPort',7682),c.get('webPort',8088),c.get('fontSize',18)))")"
+# Ports + font come from config.json (+ optional config.local.json override); env wins.
+if [[ -f "$DIR/config.json" ]]; then
+  eval "$(python3 -c "import json,pathlib;d=pathlib.Path('$DIR');c={};[c.update(json.loads((d/f).read_text())) for f in ('config.json','config.local.json') if (d/f).exists()];print('CFG_TTYD=%s\nCFG_WEB=%s\nCFG_FONT=%s'%(c.get('ttydPort',7682),c.get('webPort',8088),c.get('fontSize',18)))")"
 fi
 TTYD_PORT="${TTYD_PORT:-${CFG_TTYD:-7682}}"
 WEB_PORT="${WEB_PORT:-${CFG_WEB:-8088}}"

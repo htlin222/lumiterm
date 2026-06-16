@@ -1,5 +1,6 @@
-# secrets — never commit
+# secrets / machine-local overrides — never commit
 .env
+config.local.json
 
 # local runtime / user data
 eli5_history.db

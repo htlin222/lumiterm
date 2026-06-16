@@ -7,7 +7,11 @@ import json
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+cfg = {}
+for _f in ("config.json", "config.local.json"):  # config.local.json overrides
+    _p = ROOT / _f
+    if _p.exists():
+        cfg.update(json.loads(_p.read_text(encoding="utf-8")))
 
 wj = {
     "name": cfg.get("askWorkerName", "ask-live-comments"),

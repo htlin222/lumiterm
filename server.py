@@ -76,6 +76,19 @@ def load_prompt() -> dict:
         return {}
 
 
+def load_config() -> dict:
+    """Merge config.json with an optional gitignored config.local.json (local wins)."""
+    cfg = {}
+    for fn in ("config.json", "config.local.json"):
+        p = ROOT / fn
+        if p.exists():
+            try:
+                cfg.update(json.loads(p.read_text(encoding="utf-8")))
+            except Exception:  # noqa: BLE001
+                pass
+    return cfg
+
+
 def load_env() -> dict:
     env = {}
     f = ROOT / ".env"
@@ -95,8 +108,12 @@ class Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
-        if self.path.split("?")[0] == "/api/history":
+        path = self.path.split("?")[0]
+        if path == "/api/history":
             return self._history()
+        if path == "/config.json":
+            # serve the merged config (config.json + config.local.json overrides)
+            return self._json(200, load_config())
         return super().do_GET()
 
     def _history(self):
