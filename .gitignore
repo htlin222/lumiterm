@@ -1,0 +1,29 @@
+# secrets — never commit
+.env
+
+# local runtime / user data
+eli5_history.db
+*.db
+.demo_history
+
+# generated/downloaded assets (rebuilt by `make`)
+ttyd-index.html
+fonts/*.woff2
+fonts/src/
+scripts/ttyd-default.html
+*.zwc
+
+# python
+__pycache__/
+*.pyc
+
+# cloudflare / node
+.wrangler/
+ask/.wrangler/
+# generated from config.json by scripts/gen-wrangler.py
+ask/wrangler.jsonc
+node_modules/
+
+# macOS / editor cruft
+.DS_Store
+*.swp

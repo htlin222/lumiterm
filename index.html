@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>demo — zsh</title>
+  <style>
+    :root {
+      --term-bg: #fbfbfd;
+      --titlebar: #f0f0f4;
+      --titlebar-edge: #e2e2ea;
+      --titlebar-text: #6b7178;
+      --pad: clamp(10px, 1.6vw, 22px);
+      --win-w: 90vw;     /* set by settings */
+      --win-h: 86vh;     /* set by settings */
+      --accent: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 800px at 15% -10%, #eef2ff 0%, transparent 55%),
+        radial-gradient(1000px 700px at 110% 120%, #fdeef6 0%, transparent 50%),
+        linear-gradient(135deg, #f6f7fb 0%, #eef0f6 100%);
+      display: flex; align-items: center; justify-content: center;
+      padding: clamp(16px, 4vw, 56px);
+    }
+
+    .window {
+      position: relative;
+      width: min(var(--win-w), 1500px);
+      height: var(--win-h);
+      display: flex; flex-direction: column;
+      background: var(--term-bg);
+      border-radius: 14px; overflow: hidden;
+      border: 1px solid rgba(0,0,0,.06);
+      box-shadow: 0 1px 1px rgba(0,0,0,.04),
+                  0 18px 40px -12px rgba(40,50,90,.28),
+                  0 40px 90px -30px rgba(40,50,90,.30);
+      transition: width .18s ease, height .18s ease;
+    }
+    /* CSS "maximize" instead of the native Fullscreen API — the browser
+       reserves Esc to exit real fullscreen, which would steal vim's Esc. */
+    .window.maximized {
+      position: fixed; inset: 0;
+      width: 100vw !important; height: 100vh !important; max-width: none;
+      border-radius: 0; border: 0; z-index: 60;
+    }
+    /* floating Exit button, only while maximized */
+    .exitfs {
+      position: fixed; top: 16px; right: 16px; z-index: 80;
+      display: none; align-items: center; gap: 7px;
+      height: 36px; padding: 0 14px; border: 0; border-radius: 999px; cursor: pointer;
+      font: 600 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      color: #fff; background: rgba(20,22,28,.78); backdrop-filter: blur(8px);
+      box-shadow: 0 4px 14px -4px rgba(0,0,0,.5);
+    }
+    .exitfs.show { display: inline-flex; }
+    .exitfs:hover { background: rgba(20,22,28,.92); }
+    .exitfs svg { width: 14px; height: 14px; }
+
+    .titlebar {
+      flex: 0 0 auto; height: 42px;
+      display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+      padding: 0 14px;
+      background: linear-gradient(180deg, #f6f6fa 0%, var(--titlebar) 100%);
+      border-bottom: 1px solid var(--titlebar-edge);
+      user-select: none;
+    }
+    .lights { display: flex; gap: 8px; }
+    .light { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.18); }
+    .light.red { background: #ff5f57; } .light.yellow { background: #febc2e; } .light.green { background: #28c840; }
+    .title { grid-column: 2; font-size: 13px; font-weight: 600; letter-spacing: .2px; color: var(--titlebar-text); white-space: nowrap; }
+    .title .dot { opacity: .45; padding: 0 6px; }
+
+    /* full-screen button: top-right, hidden until the window is hovered */
+    .fsbtn {
+      grid-column: 3; justify-self: end;
+      width: 26px; height: 26px; display: grid; place-items: center;
+      border: 0; border-radius: 7px; cursor: pointer;
+      background: rgba(0,0,0,.04); color: var(--titlebar-text);
+      opacity: 0; transform: translateY(-2px);
+      transition: opacity .15s ease, transform .15s ease, background .15s ease;
+    }
+    .window:hover .fsbtn { opacity: 1; transform: none; }
+    .fsbtn:hover { background: rgba(0,0,0,.10); color: #1d1d1f; }
+    .fsbtn svg { width: 14px; height: 14px; }
+
+    .screen { flex: 1 1 auto; padding: var(--pad); background: var(--term-bg); position: relative; }
+    iframe { width: 100%; height: 100%; border: 0; display: block; background: var(--term-bg); }
+
+    /* spotlight mask: dim + blur the whole terminal except a narrow,
+       soft-edged ("halo") band over the centered current line */
+    .spot-mask {
+      position: absolute; inset: 0; z-index: 5; pointer-events: none;
+      opacity: 0; transition: opacity .2s ease;
+      background: rgba(255, 255, 255, .9);   /* white veil: pure white -> focus -> pure white */
+      backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+      /* the hole: a TALL clear band over the centered line, feathered to the edges */
+      --hole: linear-gradient(to bottom,
+        #000 0%, #000 30%,
+        rgba(0,0,0,.55) 38%,
+        transparent 42%, transparent 58%,
+        rgba(0,0,0,.55) 62%,
+        #000 70%, #000 100%);
+      -webkit-mask: var(--hole); mask: var(--hole);
+    }
+    .spot-mask.show { opacity: 1; }
+
+    /* floating bottom toolbar */
+    .toolbar {
+      position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+      display: flex; gap: 8px; z-index: 40;
+    }
+    .pill {
+      display: inline-flex; align-items: center; gap: 7px;
+      height: 38px; padding: 0 15px; border: 0; border-radius: 999px; cursor: pointer;
+      font: 600 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      color: #2b2d31; background: rgba(255,255,255,.85); backdrop-filter: blur(8px);
+      box-shadow: 0 2px 6px rgba(40,50,90,.12), 0 10px 24px -10px rgba(40,50,90,.35);
+      transition: transform .12s ease, background .12s ease, color .12s ease;
+    }
+    .pill:hover { transform: translateY(-1px); }
+    .pill:active { transform: translateY(0); }
+    .pill svg { width: 15px; height: 15px; }
+    .pill.on { background: var(--accent); color: #fff; }
+
+    /* settings popover */
+    .panel {
+      position: fixed; right: 22px; bottom: 72px; width: 280px; z-index: 50;
+      background: rgba(255,255,255,.96); backdrop-filter: blur(10px);
+      border: 1px solid rgba(0,0,0,.07); border-radius: 14px;
+      box-shadow: 0 10px 30px -8px rgba(40,50,90,.35);
+      padding: 16px; opacity: 0; pointer-events: none; transform: translateY(8px) scale(.98);
+      transition: opacity .15s ease, transform .15s ease;
+    }
+    .panel.open { opacity: 1; pointer-events: auto; transform: none; }
+    .panel h3 { margin: 0 0 12px; font-size: 13px; color: #6b7178; font-weight: 700; letter-spacing: .3px; text-transform: uppercase; }
+    .row { margin: 0 0 14px; }
+    .row:last-child { margin-bottom: 0; }
+    .row label { display: flex; justify-content: space-between; font-size: 13px; color: #2b2d31; font-weight: 600; margin-bottom: 6px; }
+    .row label .val { color: var(--accent); font-variant-numeric: tabular-nums; }
+    input[type=range] { width: 100%; accent-color: var(--accent); }
+    select { width: 100%; padding: 6px 8px; border-radius: 8px; border: 1px solid #d8d8e0; font-size: 13px; background: #fff; }
+    .presets { display: flex; gap: 6px; }
+    .presets button { flex: 1; height: 30px; border: 1px solid #d8d8e0; background: #fff; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; color: #2b2d31; }
+    .presets button:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ELI5 selection toolbar (anchored above the highlighted text) */
+    .selbar {
+      position: fixed; z-index: 70; display: none;
+      transform: translate(-50%, -100%);
+      align-items: center; gap: 6px;
+    }
+    .selbar.show { display: inline-flex; }
+    .selbar button {
+      display: inline-flex; align-items: center; gap: 6px;
+      height: 34px; padding: 0 14px; border: 0; border-radius: 999px; cursor: pointer;
+      font: 700 13px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; color: #fff;
+      background: linear-gradient(180deg, #3b82f6, #2563eb);
+      box-shadow: 0 4px 14px -4px rgba(37, 99, 235, .6);
+    }
+    .selbar button:hover { filter: brightness(1.07); }
+    .selbar svg { width: 14px; height: 14px; }
+
+    /* ELI5 result panel */
+    .eli5 {
+      position: fixed; right: 22px; bottom: 72px; width: 420px;
+      z-index: 75; display: none; flex-direction: column;
+      background: rgba(255, 255, 255, .98); backdrop-filter: blur(10px);
+      border: 1px solid rgba(0, 0, 0, .08); border-radius: 14px; overflow: hidden;
+      box-shadow: 0 16px 40px -10px rgba(40, 50, 90, .4);
+      resize: both; min-width: 280px; min-height: 220px; max-width: 92vw; max-height: 92vh;
+    }
+    .eli5.show { display: flex; }
+    .eli5 header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 11px 14px; border-bottom: 1px solid rgba(0, 0, 0, .06);
+      font-size: 12px; font-weight: 700; letter-spacing: .3px; color: #6b7178;
+      cursor: move; user-select: none;   /* drag handle */
+    }
+    .eli5 footer button.fsbtn2 { padding: 0 11px; font-weight: 700; }
+    .eli5 header .x { border: 0; background: none; cursor: pointer; color: #9aa0a8; font-size: 15px; line-height: 1; }
+    .eli5 .src { padding: 9px 14px; font: 12px/1.45 SFMono-Regular, Menlo, monospace; color: #8a8f98; background: #f7f7fb; border-bottom: 1px solid rgba(0,0,0,.05); white-space: pre-wrap; word-break: break-all; max-height: 56px; overflow: auto; }
+    .eli5 .out { flex: 1 1 auto; padding: 14px; font-size: 14px; line-height: 1.65; color: #2b2d31; white-space: pre-wrap; min-height: 56px; overflow: auto; }
+    .eli5 .out.loading { color: #8a8f98; }
+    .eli5 footer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid rgba(0,0,0,.06); }
+    .eli5 footer button { height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid #d8d8e0; background: #fff; cursor: pointer; font-size: 13px; font-weight: 600; color: #2b2d31; }
+    .eli5 footer button.primary { margin-left: auto; border: 0; color: #fff; background: var(--accent); }
+    .eli5 footer button:hover { filter: brightness(.98); }
+    .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid #c9ccd3; border-top-color: var(--accent); border-radius: 50%; animation: sp .7s linear infinite; vertical-align: -2px; margin-right: 7px; }
+    @keyframes sp { to { transform: rotate(360deg); } }
+
+    /* live audience comments (streamed from the ask worker) — macOS-style */
+    .ask-stack { position: fixed; top: 56px; right: 16px; width: 300px; max-width: calc(100vw - 32px); display: flex; flex-direction: column; gap: 9px; z-index: 65; pointer-events: none; }
+    .ask-note { position: relative; pointer-events: auto; background: rgba(255,255,255,.97); backdrop-filter: blur(6px); border: 1px solid rgba(0,0,0,.07); border-radius: 13px; padding: 11px 13px; box-shadow: 0 10px 28px -8px rgba(40,50,90,.4); opacity: 0; transform: translateX(34px) scale(.98); transition: opacity .3s ease, transform .3s ease; }
+    .ask-note.in { opacity: 1; transform: none; }
+    .ask-note.out { opacity: 0; transform: translateX(34px) scale(.98); }
+    .ask-note .nm { font-weight: 800; font-size: 12px; color: #2563eb; margin-bottom: 2px; }
+    .ask-note .tx { font-size: 14px; line-height: 1.45; color: #1d1f25; white-space: pre-wrap; word-break: break-word; }
+    .ask-note .tm { font-size: 10px; color: #9aa0a8; margin-top: 5px; }
+    .ask-note .x { position: absolute; top: 6px; right: 8px; border: 0; background: none; color: #b8bdc6; font-size: 15px; line-height: 1; cursor: pointer; }
+    .ask-note .x:hover { color: #1d1f25; }
+  </style>
+</head>
+<body>
+  <main class="window" id="win" role="application" aria-label="Demo terminal">
+    <div class="titlebar">
+      <div class="lights">
+        <span class="light red"></span><span class="light yellow"></span><span class="light green"></span>
+      </div>
+      <div class="title">demo <span class="dot">—</span> zsh</div>
+      <button class="fsbtn" id="fsbtn" title="Full screen" aria-label="Full screen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
+        </svg>
+      </button>
+    </div>
+    <div class="screen">
+      <iframe id="term" src="http://localhost:7682" title="Terminal" allow="clipboard-read; clipboard-write"></iframe>
+      <div class="spot-mask" id="spotMask" aria-hidden="true"></div>
+    </div>
+  </main>
+
+  <!-- floating exit-fullscreen button (Esc is left free for vim) -->
+  <button class="exitfs" id="exitFs" title="Exit full screen">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+    Exit full screen
+  </button>
+
+  <!-- live audience comments overlay -->
+  <div class="ask-stack" id="askStack"></div>
+
+  <!-- floating controls -->
+  <div class="toolbar">
+    <button class="pill" id="spotBtn" title="Spotlight current line (s)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+      Spotlight
+    </button>
+    <button class="pill" id="gearBtn" title="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </button>
+  </div>
+
+  <!-- ELI5 selection toolbar -->
+  <div class="selbar" id="selBar">
+    <button id="eli5Btn" title="解釋這段指令（繁體中文）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9 14 12l1.3 5L12 14.3 8.7 17 10 12 5.5 9l4.6-1.4z"/></svg>
+      ELI5 繁中
+    </button>
+  </div>
+
+  <!-- ELI5 result panel -->
+  <div class="eli5" id="eli5">
+    <header><span>ELI5 · 繁體中文</span><button class="x" id="eli5Close" aria-label="Close">✕</button></header>
+    <div class="src" id="eli5Src"></div>
+    <div class="out" id="eli5Out"></div>
+    <footer>
+      <button id="eli5FSdec" class="fsbtn2" title="Smaller text">A−</button>
+      <button id="eli5FSinc" class="fsbtn2" title="Larger text">A+</button>
+      <button id="eli5Copy">Copy</button>
+      <button id="eli5Again" class="primary">重新解釋</button>
+    </footer>
+  </div>
+
+  <div class="panel" id="panel">
+    <h3>Terminal</h3>
+    <div class="row">
+      <label>Font size <span class="val" id="fsVal">16 px</span></label>
+      <input type="range" id="fontSize" min="10" max="30" step="1" value="16" />
+    </div>
+    <div class="row">
+      <label>Font family</label>
+      <select id="fontFamily">
+        <option value='"JetBrainsMono NF", SFMono-Regular, Menlo, monospace'>JetBrainsMono NF</option>
+        <option value='Menlo, monospace'>Menlo</option>
+        <option value='SFMono-Regular, monospace'>SF Mono</option>
+        <option value='monospace'>System monospace</option>
+      </select>
+    </div>
+    <h3 style="margin-top:18px">macOS window</h3>
+    <div class="row">
+      <label>Width <span class="val" id="wVal">80 vw</span></label>
+      <input type="range" id="winW" min="40" max="98" step="1" value="80" />
+    </div>
+    <div class="row">
+      <label>Height <span class="val" id="hVal">78 vh</span></label>
+      <input type="range" id="winH" min="40" max="96" step="1" value="78" />
+    </div>
+    <div class="row presets">
+      <button data-w="56" data-h="62" data-fs="15">Compact</button>
+      <button data-w="80" data-h="78" data-fs="16">Standard</button>
+      <button data-w="94" data-h="90" data-fs="18">Wide</button>
+    </div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const iframe = $('term'), win = $('win'), root = document.documentElement;
+    const DEF = { fontSize: 18, fontFamily: '"JetBrainsMono NF", SFMono-Regular, Menlo, monospace', winW: 90, winH: 86, spotlight: false };
+    let state = Object.assign({}, DEF);
+    try { state = Object.assign(state, JSON.parse(localStorage.getItem('demo-settings-v2') || '{}')); } catch (e) {}
+
+    const save = () => { try { localStorage.setItem('demo-settings-v2', JSON.stringify(state)); } catch (e) {} };
+    const post = msg => { try { iframe.contentWindow.postMessage(msg, '*'); } catch (e) {} };
+    const postFont = () => post({ type: 'demo:font', fontSize: state.fontSize, fontFamily: state.fontFamily });
+    const postSpot = () => post({ type: 'demo:spotlight', on: state.spotlight, factor: 2 });
+
+    function applyWindow() {
+      root.style.setProperty('--win-w', state.winW + 'vw');
+      root.style.setProperty('--win-h', state.winH + 'vh');
+      $('wVal').textContent = state.winW + ' vw';
+      $('hVal').textContent = state.winH + ' vh';
+      $('winW').value = state.winW; $('winH').value = state.winH;
+    }
+    function applyFontUI() {
+      $('fontSize').value = state.fontSize;
+      $('fsVal').textContent = state.fontSize + ' px';
+      $('fontFamily').value = state.fontFamily;
+    }
+
+    // --- font controls ---
+    $('fontSize').addEventListener('input', e => {
+      state.fontSize = +e.target.value; $('fsVal').textContent = state.fontSize + ' px';
+      postFont(); save();
+    });
+    $('fontFamily').addEventListener('change', e => { state.fontFamily = e.target.value; postFont(); save(); });
+
+    // --- window size controls ---
+    $('winW').addEventListener('input', e => { state.winW = +e.target.value; applyWindow(); save(); });
+    $('winH').addEventListener('input', e => { state.winH = +e.target.value; applyWindow(); save(); });
+    document.querySelectorAll('.presets button').forEach(b => b.addEventListener('click', () => {
+      state.winW = +b.dataset.w; state.winH = +b.dataset.h; state.fontSize = +b.dataset.fs;
+      applyWindow(); applyFontUI(); postFont(); save();
+    }));
+
+    // --- settings panel toggle ---
+    const panel = $('panel');
+    $('gearBtn').addEventListener('click', e => { e.stopPropagation(); panel.classList.toggle('open'); });
+    document.addEventListener('click', e => { if (!panel.contains(e.target) && e.target !== $('gearBtn') && !$('gearBtn').contains(e.target)) panel.classList.remove('open'); });
+
+    // --- spotlight toggle ---
+    function setSpot(on) {
+      state.spotlight = on;
+      $('spotBtn').classList.toggle('on', on);
+      $('spotMask').classList.toggle('show', on);
+      postSpot(); save();
+    }
+    $('spotBtn').addEventListener('click', () => setSpot(!state.spotlight));
+
+    // --- maximize (CSS, not native fullscreen, so Esc stays free for vim) ---
+    function setMax(on) {
+      win.classList.toggle('maximized', on);
+      $('exitFs').classList.toggle('show', on);
+      // window size changed -> ttyd's ResizeObserver refits; nudge as backup
+      setTimeout(() => { postFont(); }, 120);
+    }
+    $('fsbtn').addEventListener('click', () => setMax(!win.classList.contains('maximized')));
+    $('exitFs').addEventListener('click', () => setMax(false));
+
+    // --- keyboard shortcut: s = spotlight (only when the page, not the
+    //     terminal, has focus). Esc is intentionally NOT bound. ---
+    document.addEventListener('keydown', e => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      if (e.key === 's') setSpot(!state.spotlight);
+    });
+
+    // --- ELI5 on selection (Groq via /api/eli5) ---
+    let selText = '';
+    const selBar = $('selBar'), eli5 = $('eli5'), eli5Out = $('eli5Out'), eli5Src = $('eli5Src');
+
+    window.addEventListener('message', ev => {
+      const d = ev.data || {};
+      if (d.type !== 'demo:selection') return;
+      selText = (d.text || '').trim();
+      if (!selText) { selBar.classList.remove('show'); return; }
+      const r = iframe.getBoundingClientRect();
+      let left = Math.max(64, Math.min(r.left + (d.x || 0), window.innerWidth - 64));
+      let top = Math.max(52, r.top + (d.y || 0));   // anchored above the selection
+      selBar.style.left = left + 'px';
+      selBar.style.top = top + 'px';
+      selBar.classList.add('show');
+    });
+    // dismiss the toolbar when clicking away (button click still fires first)
+    document.addEventListener('mousedown', e => { if (!selBar.contains(e.target)) selBar.classList.remove('show'); });
+
+    async function runEli5() {
+      selBar.classList.remove('show');
+      if (!selText) return;
+      eli5Src.textContent = selText;
+      eli5Out.classList.add('loading');
+      eli5Out.innerHTML = '<span class="spin"></span>思考中…';
+      eli5.classList.add('show');
+      try {
+        const res = await fetch('/api/eli5', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: selText })
+        });
+        const data = await res.json().catch(() => ({}));
+        eli5Out.classList.remove('loading');
+        eli5Out.textContent = res.ok ? (data.text || '(empty)') : ('⚠ ' + (data.error || ('HTTP ' + res.status)));
+      } catch (e) {
+        eli5Out.classList.remove('loading');
+        eli5Out.textContent = '⚠ ' + e.message;
+      }
+    }
+    $('eli5Btn').addEventListener('click', runEli5);
+    $('eli5Again').addEventListener('click', runEli5);
+    $('eli5Close').addEventListener('click', () => eli5.classList.remove('show'));
+    $('eli5Copy').addEventListener('click', () => { navigator.clipboard?.writeText(eli5Out.textContent || ''); });
+
+    // panel answer font size (persisted)
+    let eli5FS = +(localStorage.getItem('eli5-fs') || 14);
+    const applyEli5FS = () => { eli5Out.style.fontSize = eli5FS + 'px'; };
+    applyEli5FS();
+    $('eli5FSdec').addEventListener('click', () => { eli5FS = Math.max(10, eli5FS - 1); applyEli5FS(); localStorage.setItem('eli5-fs', eli5FS); });
+    $('eli5FSinc').addEventListener('click', () => { eli5FS = Math.min(30, eli5FS + 1); applyEli5FS(); localStorage.setItem('eli5-fs', eli5FS); });
+
+    // make the panel draggable by its header
+    (function () {
+      const head = eli5.querySelector('header');
+      let drag = false, sx = 0, sy = 0, ox = 0, oy = 0;
+      head.addEventListener('mousedown', e => {
+        if (e.target.closest('.x')) return;          // not when hitting close
+        drag = true;
+        const r = eli5.getBoundingClientRect();
+        eli5.style.left = r.left + 'px'; eli5.style.top = r.top + 'px';
+        eli5.style.right = 'auto'; eli5.style.bottom = 'auto';
+        sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
+        e.preventDefault();
+      });
+      document.addEventListener('mousemove', e => {
+        if (!drag) return;
+        let nx = ox + (e.clientX - sx), ny = oy + (e.clientY - sy);
+        nx = Math.max(0, Math.min(nx, window.innerWidth - eli5.offsetWidth));
+        ny = Math.max(0, Math.min(ny, window.innerHeight - eli5.offsetHeight));
+        eli5.style.left = nx + 'px'; eli5.style.top = ny + 'px';
+      });
+      document.addEventListener('mouseup', () => { drag = false; });
+    })();
+
+    // --- live audience comments from the ask worker (macOS-style notifications) ---
+    (async function () {
+      let askHost = 'ask.example.com';   // overridden by config.json (single source of truth)
+      try { const c = await (await fetch('/config.json')).json(); if (c.askHost) askHost = c.askHost; } catch (e) {}
+      const ASK_WS = 'wss://' + askHost + '/ws';
+      const stack = $('askStack');
+      const rm = c => { c.classList.remove('in'); c.classList.add('out'); setTimeout(() => c.remove(), 320); };
+      function add(c) {
+        const d = document.createElement('div'); d.className = 'ask-note';
+        const x = document.createElement('button'); x.className = 'x'; x.textContent = '×'; x.onclick = () => rm(d);
+        const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = c.name || '匿名';
+        const tx = document.createElement('div'); tx.className = 'tx'; tx.textContent = c.text || '';
+        const tm = document.createElement('div'); tm.className = 'tm'; tm.textContent = new Date(c.ts || Date.now()).toLocaleTimeString();
+        d.append(x, nm, tx, tm); stack.appendChild(d);
+        requestAnimationFrame(() => d.classList.add('in'));
+        // stays until dismissed with × (no auto-fade)
+        while (stack.children.length > 8) stack.removeChild(stack.firstChild);
+      }
+      let ws;
+      function connect() {
+        try { ws = new WebSocket(ASK_WS); } catch (e) { return; }
+        ws.onmessage = e => { try { const d = JSON.parse(e.data); if (d.type === 'comment') add(d); } catch (_) {} };
+        ws.onclose = () => setTimeout(connect, 3000);   // auto-reconnect
+      }
+      connect();
+    })();
+
+    // --- apply saved state; re-send to terminal whenever it (re)loads ---
+    applyWindow(); applyFontUI();
+    $('spotBtn').classList.toggle('on', state.spotlight);
+    $('spotMask').classList.toggle('show', state.spotlight);
+    iframe.addEventListener('load', () => {
+      // ttyd needs a moment to spin up the terminal; retry a few times
+      [200, 600, 1200, 2000].forEach(t => setTimeout(() => { postFont(); postSpot(); }, t));
+    });
+  </script>
+</body>
+</html>

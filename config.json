@@ -1,0 +1,8 @@
+{
+  "_comment": "Single source of truth. Edit here only. serve.sh reads ports/font at launch; index.html fetches askHost at runtime; ask/wrangler.jsonc is generated from this by `make deploy`.",
+  "askHost": "ask.example.com",
+  "askWorkerName": "ask-live-comments",
+  "ttydPort": 7682,
+  "webPort": 8088,
+  "fontSize": 18
+}
